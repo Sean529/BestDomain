@@ -1,81 +1,71 @@
 import os
 import requests
+import json
 
-def get_ip_list(url):
-    response = requests.get(url)
-    response.raise_for_status()
-    return response.text.strip().split('\n')
+# 从 GitHub Secrets 获取配置
+ID = os.environ.get('DNSPOD_ID')
+TOKEN = os.environ.get('DNSPOD_TOKEN')
+DOMAIN = os.environ.get('DOMAINS')
+SUB_DOMAIN = os.environ.get('SUB_DOMAINS')
 
-def get_cloudflare_zone(api_token):
-    headers = {
-        'Authorization': f'Bearer {api_token}',
-        'Content-Type': 'application/json',
+def get_best_ips():
+    # 从 IPDB 获取优选 IP 列表
+    url = "https://raw.githubusercontent.com/ymyuuu/IPDB/main/bestcf.txt"
+    resp = requests.get(url)
+    return resp.text.strip().split('\n')[:3]  # 只要前 3 个最快的 IP
+
+def update_dnspod(ip):
+    # 调用 DNSPod API 修改 A 记录
+    api_url = "https://dnsapi.cn/Record.List"
+    data = {
+        "login_token": f"{ID},{TOKEN}",
+        "format": "json",
+        "domain": DOMAIN,
+        "sub_domain": SUB_DOMAIN,
+        "record_type": "A"
     }
-    response = requests.get('https://api.cloudflare.com/client/v4/zones', headers=headers)
-    response.raise_for_status()
-    zones = response.json().get('result', [])
-    if not zones:
-        raise Exception("No zones found")
-    return zones[0]['id'], zones[0]['name']
+    
+    # 1. 获取现有记录 ID
+    try:
+        response = requests.post(api_url, data=data)
+        response.raise_for_status() # Check for HTTP errors
+        records = response.json().get('records', [])
+    except Exception as e:
+        print(f"获取记录失败: {e}")
+        print(f"响应内容: {response.text if 'response' in locals() else 'No response'}")
+        return
 
-def delete_existing_dns_records(api_token, zone_id, subdomain, domain):
-    headers = {
-        'Authorization': f'Bearer {api_token}',
-        'Content-Type': 'application/json',
-    }
-    record_name = domain if subdomain == '@' else f'{subdomain}.{domain}'
-    while True:
-        response = requests.get(f'https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records?type=A&name={record_name}', headers=headers)
-        response.raise_for_status()
-        records = response.json().get('result', [])
-        if not records:
-            break
-        for record in records:
-            delete_response = requests.delete(f'https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records/{record["id"]}', headers=headers)
-            delete_response.raise_for_status()
-            print(f"Del {subdomain}:{record['id']}")
-
-def update_cloudflare_dns(ip_list, api_token, zone_id, subdomain, domain):
-    headers = {
-        'Authorization': f'Bearer {api_token}',
-        'Content-Type': 'application/json',
-    }
-    record_name = domain if subdomain == '@' else f'{subdomain}.{domain}'
-    for ip in ip_list:
-        data = {
-            "type": "A",
-            "name": record_name,
-            "content": ip,
-            "ttl": 1,
-            "proxied": False
-        }
-        response = requests.post(f'https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records', json=data, headers=headers)
-        if response.status_code == 200:
-            print(f"Add {subdomain}:{ip}")
-        else:
-            print(f"Failed to add A record for IP {ip} to subdomain {subdomain}: {response.status_code} {response.text}")
+    if records:
+        record_id = records[0]['id']
+        # 2. 修改记录
+        modify_url = "https://dnsapi.cn/Record.Modify"
+        data.update({
+            "record_id": record_id,
+            "value": ip,
+            "record_line": "默认"
+        })
+        try:
+            res = requests.post(modify_url, data=data).json()
+            print(f"IP {ip} 更新结果: {res['status']['message']}")
+        except Exception as e:
+             print(f"修改记录失败: {e}")
+    else:
+        # 3. 如果不存在则新建
+        create_url = "https://dnsapi.cn/Record.Create"
+        data.update({
+            "value": ip,
+            "record_line": "默认"
+        })
+        try:
+            res = requests.post(create_url, data=data).json()
+            print(f"IP {ip} 创建结果: {res['status']['message']}")
+        except Exception as e:
+            print(f"创建记录失败: {e}")
 
 if __name__ == "__main__":
-    api_token = os.getenv('CF_API_TOKEN')
-    
-    # 示例URL和子域名对应的IP列表
-    subdomain_ip_mapping = {
-        'bestcf': 'https://ipdb.030101.xyz/api/bestcf.txt',
-        'bestproxy': 'https://ipdb.030101.xyz/api/bestproxy.txt',
-        # 添加更多子域名和对应的IP列表URL
-    }
-    
-    try:
-        # 获取Cloudflare域区ID和域名
-        zone_id, domain = get_cloudflare_zone(api_token)
-        
-        for subdomain, url in subdomain_ip_mapping.items():
-            # 获取IP列表
-            ip_list = get_ip_list(url)
-            # 删除现有的DNS记录
-            delete_existing_dns_records(api_token, zone_id, subdomain, domain)
-            # 更新Cloudflare DNS记录
-            update_cloudflare_dns(ip_list, api_token, zone_id, subdomain, domain)
-            
-    except Exception as e:
-        print(f"Error: {e}")
+    ips = get_best_ips()
+    # 为简单起见，这里更新第一个最快 IP，你也可以循环更新多个
+    if ips:
+        update_dnspod(ips[0])
+    else:
+        print("未获取到优选IP")
