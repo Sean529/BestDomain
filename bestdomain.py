@@ -112,7 +112,9 @@ def get_vps789_ips(line_key):
     从 vps789.com API 获取指定运营商的优选 IP
     line_key: CT (电信), CU (联通), CM (移动)
     """
-    url = "https://vps789.com/public/sum/cfIpApi"
+    # 官方文档地址: https://vps789.com/apiwiki/
+    # 优选 IP 接口不需要 token
+    url = "https://vps789.com/openApi/cfIpApi"
     try:
         resp = requests.get(url)
         resp.raise_for_status()
