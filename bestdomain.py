@@ -15,8 +15,21 @@ def get_best_ips(url):
     try:
         resp = requests.get(url)
         resp.raise_for_status()
+        
+        # 判断内容格式：如果包含逗号，假设是 CSV，取第一列
+        lines = resp.text.strip().split('\n')
+        ips = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            if ',' in line:
+                ips.append(line.split(',')[0])
+            else:
+                ips.append(line)
+                
         # 只要前 3 个最快的 IP (如果有这么多的话)
-        return resp.text.strip().split('\n')[:3]
+        return ips[:3]
     except Exception as e:
         print(f"从 {url} 获取 IP 失败: {e}")
         return []
@@ -93,14 +106,38 @@ def update_dnspod(ip, line):
         except Exception as e:
             print(f"线路 [{line}] 创建请求异常: {e}")
 
+
+def get_vps789_ips(line_key):
+    """
+    从 vps789.com API 获取指定运营商的优选 IP
+    line_key: CT (电信), CU (联通), CM (移动)
+    """
+    url = "https://vps789.com/public/sum/cfIpApi"
+    try:
+        resp = requests.get(url)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        # 获取指定运营商的记录列表
+        records = data.get('data', {}).get(line_key, [])
+        
+        # 提取 IP 地址
+        ips = [item['ip'] for item in records if 'ip' in item]
+        return ips[:3]
+    except Exception as e:
+        print(f"从 vps789 获取 {line_key} IP 失败: {e}")
+        return []
+
+# 定义线路和对应的 IP 来源
+# type: vps789 (API) or url (Direct URL)
+SOURCES = [
+    {"line": "电信", "type": "vps789", "key": "CT"},
+    {"line": "联通", "type": "vps789", "key": "CU"},
+    {"line": "移动", "type": "vps789", "key": "CM"},
+    {"line": "默认", "type": "url", "url": "https://raw.githubusercontent.com/ymyuuu/IPDB/main/BestCF/bestcfv4.txt"}
+]
+
 if __name__ == "__main__":
-    # 定义线路和对应的 IP 来源
-    SOURCES = [
-        {"line": "电信", "url": "https://raw.githubusercontent.com/ymyuuu/IPDB/main/telecom.txt"},
-        {"line": "联通", "url": "https://raw.githubusercontent.com/ymyuuu/IPDB/main/unicom.txt"},
-        {"line": "移动", "url": "https://raw.githubusercontent.com/ymyuuu/IPDB/main/mobile.txt"},
-        {"line": "默认", "url": "https://raw.githubusercontent.com/ymyuuu/IPDB/main/bestcf.txt"}
-    ]
 
     if not all([ID, TOKEN, DOMAIN, SUB_DOMAIN]):
         print("错误: 缺少必要的环境变量 (DNSPOD_ID, DNSPOD_TOKEN, DOMAINS, SUB_DOMAINS)")
@@ -108,7 +145,12 @@ if __name__ == "__main__":
 
     for source in SOURCES:
         print(f"--- 开始处理 {source['line']} ---")
-        ips = get_best_ips(source['url'])
+        
+        ips = []
+        if source['type'] == 'vps789':
+            ips = get_vps789_ips(source['key'])
+        elif source['type'] == 'url':
+            ips = get_best_ips(source['url'])
         
         if ips:
             # 取第一个最优 IP 更新 (也可以改为循环更新多个)
