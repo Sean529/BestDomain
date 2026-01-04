@@ -36,7 +36,7 @@ def get_best_ips(url):
 
 def get_record_id(desired_line):
     """
-    获取指定线路的现有记录 ID
+    获取指定线路的现有记录 ID (包括 A 记录或 CNAME)
     """
     api_url = "https://dnsapi.cn/Record.List"
     data = {
@@ -44,7 +44,7 @@ def get_record_id(desired_line):
         "format": "json",
         "domain": DOMAIN,
         "sub_domain": SUB_DOMAIN,
-        "record_type": "A"
+        # 不再限制 record_type，以便能找到 A 或 CNAME 记录
     }
     
     try:
@@ -60,23 +60,26 @@ def get_record_id(desired_line):
         return None
     except Exception as e:
         print(f"查询记录列表失败: {e}")
-        print(f"响应内容: {response.text if 'response' in locals() else 'No response'}")
+        try:
+             print(f"响应内容: {response.text}")
+        except:
+             pass
         return None
 
-def update_dnspod(ip, line):
+def update_dnspod(value, line, record_type="A"):
     """
-    调用 DNSPod API 修改或创建 A 记录
+    调用 DNSPod API 修改或创建记录 (支持 A 或 CNAME)
     """
-    print(f"正在处理线路 [{line}] 的 IP 更新: {ip}")
+    print(f"正在处理线路 [{line}] 的更新: {value} (类型: {record_type})")
     
     data = {
         "login_token": f"{ID},{TOKEN}",
         "format": "json",
         "domain": DOMAIN,
         "sub_domain": SUB_DOMAIN,
-        "record_type": "A",
+        "record_type": record_type,
         "record_line": line,
-        "value": ip,
+        "value": value,
         "ttl": "600"
     }
 
@@ -147,10 +150,11 @@ def get_vps789_ips(line_key):
         return []
 
 # 定义线路和对应的 IP 来源
-# type: vps789 (API) or url (Direct URL)
+# type: vps789 (API) | url (Direct URL) | static (Fixed Value)
 SOURCES = [
     {"line": "电信", "type": "vps789", "key": "CT"},
-    {"line": "联通", "type": "vps789", "key": "CU"},
+    # 联通改为 CNAME 接入: cf.cf.cnae.top
+    {"line": "联通", "type": "static", "record_type": "CNAME", "value": "cf.cf.cnae.top"},
     {"line": "移动", "type": "vps789", "key": "CM"},
     {"line": "默认", "type": "url", "url": "https://raw.githubusercontent.com/ymyuuu/IPDB/main/BestCF/bestcfv4.txt"}
 ]
@@ -164,16 +168,25 @@ if __name__ == "__main__":
     for source in SOURCES:
         print(f"--- 开始处理 {source['line']} ---")
         
-        ips = []
-        if source['type'] == 'vps789':
-            ips = get_vps789_ips(source['key'])
-        elif source['type'] == 'url':
-            ips = get_best_ips(source['url'])
+        # 1. 静态记录 (CNAME 等)
+        if source.get('type') == 'static':
+             value = source['value']
+             record_type = source.get('record_type', 'CNAME')
+             update_dnspod(value, source['line'], record_type)
         
-        if ips:
-            # 取第一个最优 IP 更新 (也可以改为循环更新多个)
-            best_ip = ips[0]
-            update_dnspod(best_ip, source['line'])
+        # 2. 动态 IP 记录 (A 记录)
         else:
-            print(f"未获取到 {source['line']} 的优选 IP，跳过更新")
+            ips = []
+            if source['type'] == 'vps789':
+                ips = get_vps789_ips(source['key'])
+            elif source['type'] == 'url':
+                ips = get_best_ips(source['url'])
+            
+            if ips:
+                # 取第一个最优 IP 更新 (也可以改为循环更新多个)
+                best_ip = ips[0]
+                update_dnspod(best_ip, source['line'], "A")
+            else:
+                print(f"未获取到 {source['line']} 的优选 IP，跳过更新")
+        
         print("\n")
