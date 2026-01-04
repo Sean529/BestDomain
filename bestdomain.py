@@ -76,7 +76,8 @@ def update_dnspod(ip, line):
         "sub_domain": SUB_DOMAIN,
         "record_type": "A",
         "record_line": line,
-        "value": ip
+        "value": ip,
+        "ttl": "600"
     }
 
     # 1. 查找现有记录
@@ -122,6 +123,21 @@ def get_vps789_ips(line_key):
         
         # 获取指定运营商的记录列表
         records = data.get('data', {}).get(line_key, [])
+        
+        # 根据运营商进行分数排序 (分数越高越好)
+        # CT -> dxScore (电信分数)
+        # CU -> ltScore (联通分数)
+        # CM -> ydScore (移动分数)
+        score_key = 'avgScore' # 默认
+        if line_key == 'CT':
+            score_key = 'dxScore'
+        elif line_key == 'CU':
+            score_key = 'ltScore'
+        elif line_key == 'CM':
+            score_key = 'ydScore'
+            
+        # 降序排序
+        records.sort(key=lambda x: x.get(score_key, 0), reverse=True)
         
         # 提取 IP 地址
         ips = [item['ip'] for item in records if 'ip' in item]
